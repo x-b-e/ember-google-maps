@@ -1,38 +1,60 @@
 import Component from '@ember/component';
-import ProcessOptions from '../mixins/process-options';
-import RegisterEvents from '../mixins/register-events';
-import PublicAPI from '../utils/public-api';
 import layout from '../templates/components/g-map';
+import { addEventListeners, parseOptionsAndEvents } from '../utils/options-and-events';
 import { position as center } from '../utils/helpers';
 import { inject as service } from '@ember/service';
 import { getOwner }  from '@ember/application';
 import { computed, get, set, setProperties } from '@ember/object';
-import { not, reads } from '@ember/object/computed';
+import { not, reads, readOnly } from '@ember/object/computed';
 import { guidFor } from '@ember/object/internals';
 import { A } from '@ember/array';
 import { tryInvoke } from '@ember/utils';
 import { all, defer } from 'rsvp';
-import { scheduleOnce } from '@ember/runloop';
+import { bind, scheduleOnce } from '@ember/runloop';
 import { task } from 'ember-concurrency';
 
-const GMapAPI = {
-  id: 'mapId',
-  map: 'map',
-  components: 'components',
-  actions: {
-    update: '_updateMap',
-    trigger: '_trigger',
+function safeScheduleOnce(queue, context, onSuccess, onError) {
+  function func() {
+    if (context.isDestroying || context.isDestroyed) {
+      onError.call(context);
+    } else {
+      onSuccess.call(context);
+    }
   }
-};
+
+  scheduleOnce(queue, context, func);
+}
+
+function skipErrorReporting() {}
+
+function GMapAPI(source) {
+  return {
+    get id() {
+      return get(source, 'mapId');
+    },
+
+    get map() {
+      return source.map;
+    },
+
+    get components() {
+      return source.components;
+    },
+
+    actions: {
+      update: () => source._updateMap(),
+      trigger: () => source._trigger(),
+    }
+  };
+}
+
 
 /**
  * @class GMap
  * @module ember-google-maps/components/g-map
  * @extends Ember.Component
- * @uses ProcessOptions
- * @uses RegisterEvents
  */
-export default Component.extend(ProcessOptions, RegisterEvents, {
+export default Component.extend({
   /**
    * @property googleMapsApi
    * @type GoogleMapsApi
@@ -49,8 +71,6 @@ export default Component.extend(ProcessOptions, RegisterEvents, {
   layout,
 
   tagName: '',
-
-  _requiredOptions: ['center', 'zoom'],
 
   /**
    * Zoom level for the map
@@ -72,6 +92,7 @@ export default Component.extend(ProcessOptions, RegisterEvents, {
   center,
 
   google: reads('googleMapsApi.google'),
+
   mapComponent: reads('map'),
 
   /**
@@ -85,6 +106,7 @@ export default Component.extend(ProcessOptions, RegisterEvents, {
     return `ember-google-map-${guidFor(this)}`;
   }),
 
+
   /**
    * We detect whether there is a custom canvas on initial render.
    */
@@ -94,13 +116,32 @@ export default Component.extend(ProcessOptions, RegisterEvents, {
 
   _needsCanvas: not('_customCanvas'),
 
+
+  _optionsAndEvents: parseOptionsAndEvents(),
+
+  _options: readOnly('_optionsAndEvents.options'),
+
+  _events: readOnly('_optionsAndEvents.events'),
+
+  _createOptions(options) {
+    return {
+      ...options,
+      center: get(this, 'center'),
+      zoom: get(this, 'zoom'),
+    };
+  },
+
+  _createEvents(events) {
+    return events;
+  },
+
   init() {
     this._super(...arguments);
 
     this.components = {};
     this.gMap = {};
 
-    this.publicAPI = new PublicAPI(this, GMapAPI);
+    this.publicAPI = GMapAPI(this);
 
     this._internalAPI = {
       _registerCanvas: this._registerCanvas.bind(this),
@@ -109,6 +150,7 @@ export default Component.extend(ProcessOptions, RegisterEvents, {
     };
 
     this._canvasIsRendering = defer();
+    this._eventListeners = new Map();
 
     get(this, '_initMap').perform();
   },
@@ -117,8 +159,15 @@ export default Component.extend(ProcessOptions, RegisterEvents, {
     this._super(...arguments);
 
     if (get(this, 'map')) {
-      this._updateMap();
+      let options = this._createOptions(get(this, '_options'));
+      this._updateMap(options);
     }
+  },
+
+  willDestroyElement() {
+    this._super(...arguments);
+
+    this._eventListeners.forEach((remove) => remove());
   },
 
   /**
@@ -131,29 +180,46 @@ export default Component.extend(ProcessOptions, RegisterEvents, {
   _initMap: task(function *() {
     yield get(this, 'google');
 
+    // After google loads, we need to wait for Ember to update any values read
+    // directly from the google object and used in templates. For example, map
+    // controls may be positioned with `ControlPosition.TOP_LEFT`, the value of
+    // which is only available once google loads.
+    yield this._waitForNextRunloop();
+
     let canvas = yield this._canvasIsRendering.promise;
 
-    let options = get(this, '_options');
+    let options = this._createOptions(get(this, '_options'));
     let map = new google.maps.Map(canvas, options);
 
-    google.maps.event.addListenerOnce(map, 'idle', () => {
+    function waitForComponents() {
+      if (this.isDestroying || this.isDestroyed) { return; }
+
+      this._waitForComponents()
+        .then(() => {
+          this._componentsInitialized = true;
+          tryInvoke(this, 'onComponentsLoad', [this.publicAPI]);
+        });
+    }
+
+    function setupMap() {
       if (this.isDestroying || this.isDestroyed) { return; }
 
       set(this, 'map', map);
-      this.registerEvents();
+
+      let payload = {
+        map: this.map,
+        publicAPI: this.publicAPI,
+      };
+
+      addEventListeners(map, this._createEvents(get(this, '_events')), payload)
+        .forEach(({ name, remove }) => this._eventListeners.set(name, remove));
 
       tryInvoke(this, 'onLoad', [this.publicAPI]);
 
-      scheduleOnce('afterRender', this, () => {
-        if (this.isDestroying || this.isDestroyed) { return; }
+      safeScheduleOnce('afterRender', this, waitForComponents, skipErrorReporting);
+    }
 
-        this._waitForComponents()
-          .then(() => {
-            this._componentsInitialized = true;
-            tryInvoke(this, 'onComponentsLoad', [this.publicAPI]);
-          });
-      });
-    });
+    google.maps.event.addListenerOnce(map, 'idle', bind(this, setupMap));
   }),
 
   _waitForComponents() {
@@ -166,14 +232,19 @@ export default Component.extend(ProcessOptions, RegisterEvents, {
     return all(componentsAreInitialized);
   },
 
+  _waitForNextRunloop() {
+    return new Promise((resolve) => {
+      safeScheduleOnce('actions', this, resolve, skipErrorReporting);
+    });
+  },
+
   /**
    * Update the map options.
    *
    * @method _updateMap
    * @return
    */
-  _updateMap() {
-    let options = get(this, '_options');
+  _updateMap(options) {
     get(this, 'map').setOptions(options);
   },
 
@@ -197,13 +268,13 @@ export default Component.extend(ProcessOptions, RegisterEvents, {
   _endInitialRender() {
     if (get(this, 'fastboot.isFastBoot')) { return; }
 
-    scheduleOnce('afterRender', this, () => {
+    safeScheduleOnce('afterRender', this, () => {
       if (this.canvas) {
         set(this, '_customCanvas', this.canvas);
       }
 
       set(this, '_isInitialRender', false);
-    });
+    }, skipErrorReporting);
   },
 
   /**

@@ -1,11 +1,5 @@
-{{#if _targetPane}}
-  {{#-in-element _targetPane}}
-    <div id={{_contentId}}>
-      {{#_private-api/detect-render
-        style=innerContainerStyle
-        didRender=(action _updateComponent)}}
-        {{yield}}
-      {{/_private-api/detect-render}}
-    </div>
+{{#if (has-block)}}
+  {{#-in-element this._contentContainer}}
+    {{yield}}
   {{/-in-element}}
 {{/if}}

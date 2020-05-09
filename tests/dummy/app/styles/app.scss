@@ -16,7 +16,7 @@ $body-color: $blue-gray;
 $link-color: $dark-orange;
 
 $container-max-widths: (
-  sm: 100%,
+  sm: 540px,
   md: 768px,
   lg: 960px,
   xl: 1140px
@@ -41,7 +41,7 @@ $btn-font-weight: 600;
 $box-shadow: 0 15px 35px rgba(50,50,93,0.05), 0 5px 15px rgba(0,0,0,0.07);
 
 @import 'bootstrap-custom';
-@import 'solarized-light';
+@import 'base-16-github';
 
 body {
   min-height: 100vh;
@@ -230,6 +230,10 @@ footer {
 // Overwrite Roboto to allow emoji!
 div.gm-style {
   font-family: $font-family-sans-serif !important;
+}
+
+.anchor-middle-bottom {
+  transform: translateX(-50%) translateY(-100%);
 }
 
 .tooltip {

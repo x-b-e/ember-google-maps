@@ -9,6 +9,7 @@ const chalk = require('chalk');
 const Handlebars = require('handlebars');
 const stripIndent = require('strip-indent');
 const writeFile = require('broccoli-file-creator');
+const BroccoliDebug = require('broccoli-debug');
 const camelCase = require('camelcase');
 
 function intersection(a, b) {
@@ -31,7 +32,6 @@ function difference(a, b) {
 
 const dependencies = {
   'circle': ['marker'],
-  'overlay': ['detectRender']
 };
 
 module.exports = {
@@ -43,10 +43,17 @@ module.exports = {
     }
   },
 
+  init() {
+    this._super.init.apply(this, arguments);
+    this.debugTree = BroccoliDebug.buildDebugCallback(`ember-google-maps:${this.name}`);
+  },
+
   included() {
     this._super.included.apply(this, arguments);
 
     const app = this._findHost();
+
+    this.isProduction = app.isProduction;
 
     const config = app.options['ember-google-maps'] || {};
 
@@ -61,9 +68,18 @@ module.exports = {
     this.whitelist = this.generateWhitelist(config);
     this.blacklist = this.generateBlacklist(config);
 
+    if (this.isProduction) {
+      this.blacklist.push('warnMissingComponent');
+    }
+
     // If a whitelist is used, ensure that we include the base map components.
     if (this.whitelist.length) {
       this.whitelist.push('gMap', 'canvas', 'mapComponent', 'addonFactory');
+
+      if (!this.isProduction) {
+        this.whitelist.push('warnMissingComponent');
+      }
+
       this.whitelist.forEach((w) => {
         const deps = dependencies[w];
         if (deps) {
@@ -82,19 +98,44 @@ module.exports = {
     return { 'ember-google-maps': mapConfig };
   },
 
-  treeForAddon() {
-    let tree = this._super.treeForAddon.apply(this, arguments);
-    return this.filterComponents(tree);
+  treeForAddon(tree) {
+    tree = this.debugTree(tree, 'addon-tree:input');
+
+    let addonFactoryTree = this.createAddonFactoryTree('templates/components');
+    tree = new MergeTrees([tree, addonFactoryTree], { overwrite: true });
+    tree = this.debugTree(tree, 'addon-tree:with-addon-factory');
+
+    tree = this.filterComponents(tree);
+    tree = this.debugTree(tree, 'addon-tree:post-filter');
+
+    // Run super now, which processes and removes `.hbs`` template files.
+    tree = this._super.treeForAddon.call(this, tree);
+    tree = this.debugTree(tree, 'addon-tree:post-super');
+
+    return tree;
   },
 
-  treeForTemplates() {
-    let tree = this._super.treeForTemplates.apply(this, arguments);
+  // This hook is deprecated in Ember-CLI 3.13+.
+  // In older versions, it still runs and seems to overwrite our work in
+  // `treeForAddon`.
+  treeForAddonTemplates() {
+    let tree = this._super.treeForAddonTemplates.apply(this, arguments);
+    tree = this.debugTree(tree, 'addon-templates-tree:input');
 
+    let addonFactoryTree = this.createAddonFactoryTree('components');
+    tree = new MergeTrees([tree, addonFactoryTree], { overwrite: true });
+    tree = this.debugTree(tree, 'addon-templates-tree:with-addon-factory');
+
+    tree = this.filterComponents(tree);
+    tree = this.debugTree(tree, 'addon-templates-tree:post-filter');
+
+    return tree;
+  },
+
+  createAddonFactoryTree(templatePath) {
     let AddonRegistry = require('./lib/broccoli/addon-registry');
 
-    let addons = new AddonRegistry(this.project).components;
-
-    addons = addons.concat([
+    let addons = new AddonRegistry(this.project).components.concat([
       { key: 'marker', component: 'g-map/marker' },
       { key: 'circle', component: 'g-map/circle' },
       { key: 'polyline', component: 'g-map/polyline' },
@@ -104,23 +145,41 @@ module.exports = {
       { key: 'autocomplete', component: 'g-map/autocomplete' },
       { key: 'directions', component: 'g-map/directions' },
       { key: 'route', component: 'g-map/route' }
-    ]).filter(({ key }) => !this.excludeName(key, this.whitelist, this.blacklist));
+    ]);
+
+    if (this.isProduction) {
+      // Exclude components that we don't want in the production build.
+      addons = addons.filter(({ key }) => !this.excludeName(key, this.whitelist, this.blacklist))
+
+    } else {
+      // Replace an excluded component with a debug component in development and
+      // testing. This component should throw an assertion to warn the user of
+      // misconfigured treeshaking.
+      addons = addons.map((component) => {
+        let { key } = component;
+
+        if (this.excludeName(key, this.whitelist, this.blacklist)) {
+          return { key, component: '-private-api/warn-missing-component' };
+        }
+
+        return component;
+      });
+    }
 
     let template = Handlebars.compile(stripIndent(`
       \\{{yield
           (hash
             {{#each addons as |addon|}}
-              {{addon.key}}=(component "{{addon.component}}" map=map _internalAPI=_internalAPI gMap=gMap)
+              {{addon.key}}=(component "{{addon.component}}" map=map _internalAPI=_internalAPI gMap=gMap _name="{{addon.key}}")
             {{/each}}
           )
         }}
     `));
 
-    let addonFactoryTree = writeFile('components/-private-api/addon-factory.hbs', template({ addons }));
-
-    tree = new MergeTrees([tree, addonFactoryTree], { overwrite: true });
-
-    return this.filterComponents(tree);
+    return writeFile(
+      `${templatePath}/-private-api/addon-factory.hbs`,
+      template({ addons })
+    );
   },
 
   filterComponents(tree) {

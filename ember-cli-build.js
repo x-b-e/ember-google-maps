@@ -4,10 +4,8 @@
 const EmberAddon = require('ember-cli/lib/broccoli/ember-addon');
 
 module.exports = function(defaults) {
-  let project = defaults.project;
   let options = {
     snippetPaths: ['tests/dummy/app/templates/snippets'],
-    includeHighlightStyle: false,
 
     'ember-cli-babel': {
       includePolyfill: true
@@ -20,6 +18,14 @@ module.exports = function(defaults) {
         'tests/dummy/app/styles',
         'node_modules/bootstrap/scss'
       ]
+    },
+
+    minifyCSS: {
+      options: {
+        // Don't break Bootstrap with css mangling.
+        // Remove for clean-css 4.0
+        advanced: false,
+      }
     },
 
     'ember-composable-helpers': {
@@ -49,10 +55,6 @@ module.exports = function(defaults) {
       ]
     }
   };
-
-  if (project.findAddonByName('ember-native-dom-event-dispatcher') && process.env.DEPLOY_TARGET === undefined) {
-    options.vendorFiles = { 'jquery.js': null };
-  }
 
   let app = new EmberAddon(defaults, options);
 

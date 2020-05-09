@@ -24,8 +24,8 @@
 ------------------------------------------------------------------------------
 
 * Ember.js v2.18 or above
-* Ember CLI v2.13 or above
-* Node.js v8 or above
+* Ember CLI v3.11 or above
+* Node.js v10 or above
 
 👷‍ Maintainers
 ------------------------------------------------------------------------------
@@ -87,39 +87,7 @@ This lets you do all sorts of fancy things, like adding CSS animations and bindi
 Contributing
 ------------------------------------------------------------------------------
 
-#### Installation
-
-* `git clone https://github.com/sandydoo/ember-google-maps.git` this repository
-* `cd ember-google-maps`
-* `yarn`
-
-#### Linting
-
-* `yarn lint:js`
-* `yarn lint:js --fix `
-
-#### Setting up API keys
-
-The dummy app and test suite is run using a live map instance, which means you need an API key. I do not provide API keys for testing – you need to generate your own.
-
-You can create an API key by following the instructions here: [Create API key](https://developers.google.com/maps/documentation/javascript/get-api-key).
-
-Assign this key to the `GOOGLE_MAPS_API_KEY` variable in `.env` or just run these lines, making sure to replace `INSERT_YOUR_KEY_HERE` with your actual key.
-
-`touch .env & echo 'GOOGLE_MAPS_API_KEY=<INSERT_YOUR_KEY_HERE>' > .env`
-`cp .env .env.test`
-
-#### Running tests
-
-* `ember test` – Runs the test suite on the current Ember version
-* `ember test --server` – Runs the test suite in "watch mode"
-* `ember try:each` – Runs the test suite against multiple Ember versions
-
-
-#### Running the dummy application
-
-* `ember serve`
-* Visit the dummy application at [http://localhost:4200](http://localhost:4200).
+See the [Contributing](CONTRIBUTING.md) guide for details.
 
 For more information on using ember-cli, visit [https://ember-cli.com/](https://ember-cli.com/).
 
